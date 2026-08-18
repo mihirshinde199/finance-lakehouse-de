@@ -1,0 +1,17 @@
+tickers:
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - META
+  - TSLA
+  - JPM
+  - V
+  - UNH
+  - XOM
+  - JNJ
+
+config:
+  history_start_date: "2023-01-01"   # only used for first-ever full backfill per ticker
+  trailing_refetch_days: 5           # matches §9 — late-arriving correction window
