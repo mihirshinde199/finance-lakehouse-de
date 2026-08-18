@@ -1,8 +1,6 @@
 pyspark==3.5.1
 delta-spark==3.2.0
 yfinance==0.2.40
-apache-airflow==2.9.3
-apache-airflow-providers-databricks==6.9.0
 pandas==2.2.2
 pyyaml==6.0.1
 streamlit==1.36.0
