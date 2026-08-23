@@ -20,7 +20,7 @@ Bronze write succeeds -- never by this script. See docs/architecture.md, §7.
 """
 
 import os
-import sys
+# import sys
 import yaml
 import yfinance as yf
 import pandas as pd
