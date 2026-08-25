@@ -146,6 +146,13 @@ def fetch_ticker_data(ticker: str, start_date: date, end_date: date) -> pd.DataF
     )
     if df.empty:
         return df
+        # yfinance sometimes returns a MultiIndex column header (e.g. columns
+    # like ('Close', 'AAPL')) even for a single ticker. If left as-is,
+    # df.to_csv() writes this as two header rows, which downstream readers
+    # (Spark) misinterpret as a real data row -- producing a bogus row with
+    # a null ticker. Flatten to plain column names before anything else.
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
     df = df.reset_index()
     df["ticker"] = ticker
