@@ -32,7 +32,7 @@ from pyspark.sql.types import (
 # COMMAND ----------
 
 LANDING_PATH = "/Volumes/workspace/default/landing/"  # adjust to your actual upload path
-BATCH_ID = "20260825T014650Z"  # adjust to the batch folder you uploaded
+BATCH_ID = dbutils.widgets.get("batch_id")  # adjust to the batch folder you uploaded
 
 batch_path = f"{LANDING_PATH}{BATCH_ID}/"
 
