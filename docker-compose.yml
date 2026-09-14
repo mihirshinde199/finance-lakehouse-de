@@ -12,9 +12,9 @@ x-airflow-common:
     _PIP_ADDITIONAL_REQUIREMENTS: >-
       apache-airflow-providers-databricks==6.9.0
       databricks-sdk==0.28.0
-      databricks-sql-connector==3.4.0
+      databricks-sql-connector==2.9.3
       yfinance==1.6.0
-      pandas==2.2.2
+      pandas==2.1.4
       pyyaml==6.0.1
       python-dotenv==1.0.1
   volumes:
