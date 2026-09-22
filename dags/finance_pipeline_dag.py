@@ -23,6 +23,7 @@ the notebook, not as a duplicate Airflow task.
 """
 
 from datetime import datetime, timedelta
+import token
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -36,18 +37,14 @@ from airflow.providers.databricks.operators.databricks import (
 
 DATABRICKS_CONN_ID = "databricks_default"
 
+
 # Cluster spec for the Databricks jobs this DAG triggers. Free Edition is
 # serverless-only (Phase 3 decision) -- verify against current Databricks
 # Free Edition job-submission docs whether this new_cluster block is even
 # needed, or whether job submission defaults to serverless automatically
 # when no billable cluster spec is given. Flagged as an open item to
 # confirm during first real DAG run, not guessed at here.
-NOTEBOOK_BASE_PARAMS = {
-    "new_cluster": {
-        "spark_version": "15.4.x-scala2.12",
-        "num_workers": 0,  # serverless-style job cluster
-    }
-}
+
 
 WORKSPACE_NOTEBOOK_PATH_BRONZE = "/Workspace/finance-lakehouse/01_bronze_load"
 WORKSPACE_NOTEBOOK_PATH_SILVER = "/Workspace/finance-lakehouse/02_bronze_to_silver"
@@ -115,7 +112,7 @@ def fetch_and_upload_raw_data(**context):
         )
 
     # Upload to the Databricks Volume landing path
-    w = WorkspaceClient()  # picks up auth from Databricks connection env vars
+    w = WorkspaceClient(host=f"https://{hostname}", token=token)  # picks up auth from Databricks connection env vars
     volume_path = f"/Volumes/workspace/default/landing/{batch_id}"
     for csv_file in batch_dir.glob("*.csv"):
         with open(csv_file, "rb") as f:
@@ -197,13 +194,17 @@ with DAG(
     bronze_task = DatabricksSubmitRunOperator(
         task_id="bronze_load",
         databricks_conn_id=DATABRICKS_CONN_ID,
-        notebook_task={
-            "notebook_path": WORKSPACE_NOTEBOOK_PATH_BRONZE,
-            "base_parameters": {
-                "batch_id": "{{ ti.xcom_pull(task_ids='fetch_and_upload_raw_data', key='batch_id') }}",
-            },
-        },
-        **NOTEBOOK_BASE_PARAMS,
+        tasks=[
+            {
+                "task_key": "bronze_load",
+                "notebook_task": {
+                    "notebook_path": WORKSPACE_NOTEBOOK_PATH_BRONZE,
+                    "base_parameters": {
+                        "batch_id": "{{ ti.xcom_pull(task_ids='fetch_and_upload_raw_data', key='batch_id') }}",
+                    },
+                },
+            }
+        ],
         retries=2,
         retry_delay=timedelta(minutes=5),
     )
@@ -211,8 +212,12 @@ with DAG(
     silver_task = DatabricksSubmitRunOperator(
         task_id="bronze_to_silver",
         databricks_conn_id=DATABRICKS_CONN_ID,
-        notebook_task={"notebook_path": WORKSPACE_NOTEBOOK_PATH_SILVER},
-        **NOTEBOOK_BASE_PARAMS,
+        tasks=[
+            {
+                "task_key": "bronze_to_silver",
+                "notebook_task": {"notebook_path": WORKSPACE_NOTEBOOK_PATH_SILVER},
+            }
+        ],
         retries=2,
         retry_delay=timedelta(minutes=5),
     )
@@ -220,8 +225,12 @@ with DAG(
     gold_task = DatabricksSubmitRunOperator(
         task_id="silver_to_gold",
         databricks_conn_id=DATABRICKS_CONN_ID,
-        notebook_task={"notebook_path": WORKSPACE_NOTEBOOK_PATH_GOLD},
-        **NOTEBOOK_BASE_PARAMS,
+        tasks=[
+            {
+                "task_key": "silver_to_gold",
+                "notebook_task": {"notebook_path": WORKSPACE_NOTEBOOK_PATH_GOLD},
+            }
+        ],
         retries=2,
         retry_delay=timedelta(minutes=5),
     )
