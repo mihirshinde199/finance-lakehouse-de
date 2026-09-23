@@ -46,9 +46,9 @@ DATABRICKS_CONN_ID = "databricks_default"
 # confirm during first real DAG run, not guessed at here.
 
 
-WORKSPACE_NOTEBOOK_PATH_BRONZE = "/Workspace/finance-lakehouse/01_bronze_load"
-WORKSPACE_NOTEBOOK_PATH_SILVER = "/Workspace/finance-lakehouse/02_bronze_to_silver"
-WORKSPACE_NOTEBOOK_PATH_GOLD = "/Workspace/finance-lakehouse/03_silver_to_gold"
+WORKSPACE_NOTEBOOK_PATH_BRONZE = "/Workspace/Users/shindemihir111@gmail.com/finance-lakehouse-dev/01_bronze_load"
+WORKSPACE_NOTEBOOK_PATH_SILVER = "/Workspace/Users/shindemihir111@gmail.com/finance-lakehouse-dev/02_bronze_to_silver"
+WORKSPACE_NOTEBOOK_PATH_GOLD = "/Workspace/Users/shindemihir111@gmail.com/finance-lakehouse-dev/03_silver_to_gold"
 
 SLACK_WEBHOOK_ENV_VAR = "SLACK_WEBHOOK_URL"  # read from Airflow's .env mount
 

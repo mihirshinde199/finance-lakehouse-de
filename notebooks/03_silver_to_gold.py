@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 03 - Silver to Gold
 # MAGIC
@@ -31,13 +35,21 @@ from pyspark.sql.window import Window
 SILVER_TABLE = "silver.stock_prices_clean"
 GOLD_DAILY_TABLE = "gold.daily_price_summary"
 GOLD_PERFORMANCE_TABLE = "gold.ticker_performance_summary"
-
+ 
 # How many trailing trading days of Gold output we overwrite each run.
 # Must be well beyond the longest rolling window (50) so SMA-50 etc. are
 # never truncated at the edge of what we recompute.
 GOLD_LOOKBACK_TRADING_DAYS = 90
-
+ 
 spark.sql("CREATE SCHEMA IF NOT EXISTS gold")
+
+
+# COMMAND ----------
+
+
+from datetime import datetime as _dt
+_run_started_at = _dt.utcnow()
+_run_id = _run_started_at.strftime("%Y%m%dT%H%M%SZ")
 
 # COMMAND ----------
 
@@ -54,14 +66,14 @@ spark.sql("CREATE SCHEMA IF NOT EXISTS gold")
 # COMMAND ----------
 
 silver_df = spark.table(SILVER_TABLE).filter("is_valid = true")
-
+ 
 roll_window_20 = (
     Window.partitionBy("ticker").orderBy("trade_date").rowsBetween(-19, 0)
 )
 roll_window_50 = (
     Window.partitionBy("ticker").orderBy("trade_date").rowsBetween(-49, 0)
 )
-
+ 
 metrics_df = (
     silver_df
     .withColumn("sma_20", F.avg("close").over(roll_window_20))
@@ -69,7 +81,7 @@ metrics_df = (
     .withColumn("volatility_20d", F.stddev("daily_return").over(roll_window_20))
     .withColumn("volume_avg_20d", F.avg("volume").over(roll_window_20))
 )
-
+ 
 print(f"Rows with full rolling context computed: {metrics_df.count()}")
 
 # COMMAND ----------
@@ -84,7 +96,7 @@ print(f"Rows with full rolling context computed: {metrics_df.count()}")
 # COMMAND ----------
 
 recency_window = Window.partitionBy("ticker").orderBy(F.desc("trade_date"))
-
+ 
 gold_daily_df = (
     metrics_df
     .withColumn("recency_rank", F.row_number().over(recency_window))
@@ -96,7 +108,7 @@ gold_daily_df = (
         "volatility_20d", "volume", "volume_avg_20d", "gold_updated_at",
     )
 )
-
+ 
 print(f"Rows to write (trailing {GOLD_LOOKBACK_TRADING_DAYS} trading days/ticker): "
       f"{gold_daily_df.count()}")
 display(gold_daily_df.orderBy("ticker", F.desc("trade_date")).limit(10))
@@ -114,15 +126,16 @@ display(gold_daily_df.orderBy("ticker", F.desc("trade_date")).limit(10))
 
 # COMMAND ----------
 
+
 if not spark.catalog.tableExists(GOLD_DAILY_TABLE):
     (
         gold_daily_df.limit(0).write
         .format("delta")
         .saveAsTable(GOLD_DAILY_TABLE)
     )
-
+ 
 gold_daily_df.createOrReplaceTempView("gold_daily_updates")
-
+ 
 # Delete existing rows for any (ticker, trade_date) pair present in this
 # run's window -- scoped precisely, not a blind full-table wipe.
 spark.sql(f"""
@@ -131,9 +144,9 @@ spark.sql(f"""
         SELECT ticker, trade_date FROM gold_daily_updates
     )
 """)
-
+ 
 gold_daily_df.write.format("delta").mode("append").saveAsTable(GOLD_DAILY_TABLE)
-
+ 
 print(f"gold.daily_price_summary row count: {spark.table(GOLD_DAILY_TABLE).count()}")
 
 # COMMAND ----------
@@ -152,21 +165,21 @@ print(f"gold.daily_price_summary row count: {spark.table(GOLD_DAILY_TABLE).count
 # COMMAND ----------
 
 current_year = F.year(F.current_date())
-
+ 
 ytd_df = (
     metrics_df
     .filter(F.year("trade_date") == current_year)
     .withColumn("daily_return_filled", F.coalesce(F.col("daily_return"), F.lit(0.0)))
     .withColumn("growth_factor", F.lit(1.0) + F.col("daily_return_filled"))
 )
-
+ 
 ytd_window = Window.partitionBy("ticker").orderBy("trade_date")
-
+ 
 ytd_cumulative_df = ytd_df.withColumn(
     "cumulative_growth",
     F.exp(F.sum(F.log("growth_factor")).over(ytd_window)),
 )
-
+ 
 cumulative_return_df = (
     ytd_cumulative_df
     .withColumn(
@@ -180,7 +193,7 @@ cumulative_return_df = (
 # COMMAND ----------
 
 drawdown_window = Window.partitionBy("ticker").orderBy("trade_date")
-
+ 
 full_history_growth_df = (
     metrics_df
     .withColumn("daily_return_filled", F.coalesce(F.col("daily_return"), F.lit(0.0)))
@@ -200,7 +213,7 @@ full_history_growth_df = (
         (F.col("cumulative_growth") - F.col("running_peak")) / F.col("running_peak"),
     )
 )
-
+ 
 max_drawdown_df = (
     full_history_growth_df
     .groupBy("ticker")
@@ -288,3 +301,25 @@ display(
     .filter(F.col("as_of_date") == F.current_date())
     .orderBy(F.desc("cumulative_return_ytd"))
 )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # MAGIC %md
+# MAGIC # MAGIC ## Log this run to control.pipeline_run_log
+
+# COMMAND ----------
+
+_run_ended_at = _dt.utcnow()
+ 
+spark.sql(f"""
+    INSERT INTO control.pipeline_run_log
+    VALUES (
+        '{_run_id}', 'gold',
+        {metrics_df.count()}, {gold_daily_df.count()}, 0,
+        TIMESTAMP('{_run_started_at.isoformat()}'),
+        TIMESTAMP('{_run_ended_at.isoformat()}'),
+        'SUCCESS'
+    )
+""")
+print(f"Logged gold run {_run_id}")
