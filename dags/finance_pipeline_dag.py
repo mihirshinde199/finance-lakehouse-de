@@ -132,6 +132,58 @@ def validate_raw_landing(**context):
         raise ValueError("No batch_id found from fetch task -- failing early.")
     print(f"Validated batch_id: {batch_id}")
 
+def freshness_gate(**context):
+    """Fail the run if Gold is stale or the watermark table is malformed."""
+    import sys
+    sys.path.insert(0, "/opt/airflow/src")
+
+    from datetime import date
+    from databricks import sql
+    from ingestion.fetch_yfinance import load_config, load_env
+
+    MAX_STALENESS_DAYS = 5
+
+    expected_tickers = len(load_config()["tickers"])
+    hostname, http_path, token = load_env()
+
+    with sql.connect(
+        server_hostname=hostname, http_path=http_path, access_token=token
+    ) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT MAX(trade_date) FROM gold.daily_price_summary")
+            latest_trade_date = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT ticker) "
+                "FROM control.ingestion_watermark"
+            )
+            watermark_rows, watermark_tickers = cursor.fetchone()
+
+    problems = []
+
+    if latest_trade_date is None:
+        problems.append("gold.daily_price_summary is empty")
+    else:
+        age_days = (date.today() - latest_trade_date).days
+        if age_days > MAX_STALENESS_DAYS:
+            problems.append(
+                f"newest Gold trade_date is {latest_trade_date}, "
+                f"{age_days} days old (limit {MAX_STALENESS_DAYS})"
+            )
+
+    if not (watermark_rows == watermark_tickers == expected_tickers):
+        problems.append(
+            f"watermark table has {watermark_rows} rows / {watermark_tickers} "
+            f"distinct tickers, expected {expected_tickers} of each"
+        )
+
+    if problems:
+        raise ValueError("freshness_gate failed: " + "; ".join(problems))
+
+    print(
+        f"freshness_gate passed: newest trade_date {latest_trade_date}, "
+        f"{watermark_tickers} tickers in watermark table"
+    )
 
 def notify_slack(context, status: str):
     """Posts a simple failure/success message to Slack via webhook."""
@@ -240,5 +292,10 @@ with DAG(
         python_callable=notify_success,
         retries=0,
     )
+    freshness_task = PythonOperator(
+    task_id="freshness_gate",
+    python_callable=freshness_gate,
+    retries=0,
+    )
 
-    fetch_task >> validate_task >> bronze_task >> silver_task >> gold_task >> success_task
+    fetch_task >> validate_task >> bronze_task >> silver_task >> gold_task >> freshness_task >> success_task
