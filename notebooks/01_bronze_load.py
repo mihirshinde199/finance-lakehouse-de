@@ -1,8 +1,4 @@
 # Databricks notebook source
-# /// script
-# [tool.databricks.environment]
-# environment_version = "5"
-# ///
 # MAGIC %md
 # MAGIC # 01 - Bronze Load
 # MAGIC
@@ -32,13 +28,19 @@ from pyspark.sql.types import (
 # COMMAND ----------
 
 LANDING_PATH = "/Volumes/workspace/default/landing/"  # adjust to your actual upload path
-BATCH_ID = "20260904T130502Z"  # adjust to the batch folder you uploaded
+dbutils.widgets.text("batch_id", "")
+BATCH_ID = dbutils.widgets.get("batch_id")
+
+if not BATCH_ID:
+    raise ValueError("batch_id parameter is required - refusing to guess a batch.")
+
+# COMMAND ----------
 
 from datetime import datetime as _dt
 _run_started_at = _dt.utcnow()
- 
+
 batch_path = f"{LANDING_PATH}{BATCH_ID}/"
- 
+
 print(f"Reading batch from: {batch_path}")
 files = dbutils.fs.ls(batch_path)
 for f in files:
@@ -61,7 +63,7 @@ raw_df = (
     .option("inferSchema", "true")
     .csv(batch_path + "*.csv")
 )
- 
+
 print(f"Rows read from landing: {raw_df.count()}")
 raw_df.printSchema()
 
@@ -88,7 +90,7 @@ bronze_df = (
     .withColumn("trade_date", F.col("trade_date").cast(StringType()))
     .withColumn("ingestion_timestamp", F.current_timestamp())
     .withColumn("ingestion_date", F.to_date(F.col("ingestion_timestamp")))
-    .withColumn("source_file", F.input_file_name())
+    .withColumn("source_file", F.col("_metadata.file_path"))
     .withColumn("batch_id", F.lit(BATCH_ID))
     .select(
         "ticker", "trade_date", "open", "high", "low", "close",
@@ -96,7 +98,7 @@ bronze_df = (
         "source_file", "batch_id",
     )
 )
- 
+
 display(bronze_df.limit(10))
 
 # COMMAND ----------
@@ -106,9 +108,8 @@ display(bronze_df.limit(10))
 
 # COMMAND ----------
 
- 
 spark.sql("CREATE SCHEMA IF NOT EXISTS bronze")
- 
+
 (
     bronze_df.write
     .format("delta")
@@ -117,7 +118,7 @@ spark.sql("CREATE SCHEMA IF NOT EXISTS bronze")
     .option("mergeSchema", "true")  # Bronze allows schema drift, per §13
     .saveAsTable("bronze.stock_prices_raw")
 )
- 
+
 written_count = bronze_df.count()
 print(f"Wrote {written_count} rows to bronze.stock_prices_raw")
 
@@ -139,9 +140,9 @@ watermark_updates = (
     .agg(F.max("trade_date").alias("last_successful_trade_date"))
     .withColumn("last_run_timestamp", F.current_timestamp())
 )
- 
+
 watermark_updates.createOrReplaceTempView("watermark_updates")
- 
+
 spark.sql("""
     MERGE INTO control.ingestion_watermark AS target
     USING watermark_updates AS source
@@ -155,7 +156,7 @@ spark.sql("""
         source.ticker, source.last_successful_trade_date, source.last_run_timestamp
     )
 """)
- 
+
 print("Watermark updated for tickers in this batch:")
 display(spark.sql("SELECT * FROM control.ingestion_watermark ORDER BY ticker"))
 
@@ -176,8 +177,13 @@ display(
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Log this run to control.pipeline_run_log
+
+# COMMAND ----------
+
 _run_ended_at = _dt.utcnow()
- 
+
 spark.sql(f"""
     INSERT INTO control.pipeline_run_log
     VALUES (
@@ -189,15 +195,3 @@ spark.sql(f"""
     )
 """)
 print(f"Logged bronze run for batch {BATCH_ID}")
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- DELETE FROM bronze.stock_prices_raw WHERE ticker IS NULL;
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT ticker, COUNT(*) FROM bronze.stock_prices_raw 
-# MAGIC WHERE ticker IS NULL
-# MAGIC GROUP BY 1;

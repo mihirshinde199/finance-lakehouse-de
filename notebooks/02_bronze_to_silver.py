@@ -1,8 +1,4 @@
 # Databricks notebook source
-# /// script
-# [tool.databricks.environment]
-# environment_version = "5"
-# ///
 # MAGIC %md
 # MAGIC # 02 - Bronze to Silver
 # MAGIC
@@ -37,18 +33,17 @@ spark.sql("CREATE SCHEMA IF NOT EXISTS silver")
 
 # COMMAND ----------
 
+from datetime import datetime as _dt
+_run_started_at = _dt.utcnow()
+_run_id = _run_started_at.strftime("%Y%m%dT%H%M%SZ")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Step 1: Read Bronze and cast types
 # MAGIC
 # MAGIC Bronze stores trade_date as a loosely-typed string (§4) -- Silver is
 # MAGIC where we enforce real types for the first time.
-
-# COMMAND ----------
-
- 
-from datetime import datetime as _dt
-_run_started_at = _dt.utcnow()
-_run_id = _run_started_at.strftime("%Y%m%dT%H%M%SZ")
 
 # COMMAND ----------
 
@@ -108,7 +103,7 @@ print(f"Rows after dedup: {deduped_df.count()}  (removed {dropped_dupes} duplica
 
 # COMMAND ----------
 
- dq_checked_df = (
+dq_checked_df = (
     deduped_df
     .withColumn(
         "dq_failure_reason",
@@ -124,15 +119,14 @@ print(f"Rows after dedup: {deduped_df.count()}  (removed {dropped_dupes} duplica
     )
     .withColumn("is_valid", F.col("dq_failure_reason").isNull())
 )
- 
+
 valid_count = dq_checked_df.filter("is_valid = true").count()
 rejected_count = dq_checked_df.filter("is_valid = false").count()
 total_count = valid_count + rejected_count
 rejected_pct = (rejected_count / total_count * 100) if total_count > 0 else 0
- 
+
 print(f"Valid rows: {valid_count}")
 print(f"Rejected rows: {rejected_count} ({rejected_pct:.2f}%)")
- 
 
 # COMMAND ----------
 
@@ -147,7 +141,7 @@ print(f"Rejected rows: {rejected_count} ({rejected_pct:.2f}%)")
 # COMMAND ----------
 
 DQ_FAILURE_THRESHOLD_PCT = 5.0
- 
+
 if rejected_pct > DQ_FAILURE_THRESHOLD_PCT:
     raise ValueError(
         f"DQ gate failed: {rejected_pct:.2f}% of rows rejected, "
@@ -167,10 +161,10 @@ else:
 
 # COMMAND ----------
 
- return_window = Window.partitionBy("ticker").orderBy("trade_date")
- 
+return_window = Window.partitionBy("ticker").orderBy("trade_date")
+
 valid_df = dq_checked_df.filter("is_valid = true")
- 
+
 silver_clean_df = (
     valid_df
     .withColumn("prev_close", F.lag("close").over(return_window))
@@ -189,7 +183,7 @@ silver_clean_df = (
         "source_batch_id", "silver_updated_at",
     )
 )
- 
+
 silver_rejected_df = (
     dq_checked_df
     .filter("is_valid = false")
@@ -201,7 +195,7 @@ silver_rejected_df = (
         "silver_updated_at",
     )
 )
- 
+
 display(silver_clean_df.limit(10))
 
 # COMMAND ----------
@@ -222,9 +216,9 @@ if not spark.catalog.tableExists(SILVER_CLEAN_TABLE):
         .format("delta")
         .saveAsTable(SILVER_CLEAN_TABLE)
     )
- 
+
 silver_clean_df.createOrReplaceTempView("silver_clean_updates")
- 
+
 spark.sql(f"""
     MERGE INTO {SILVER_CLEAN_TABLE} AS target
     USING silver_clean_updates AS source
@@ -232,7 +226,7 @@ spark.sql(f"""
     WHEN MATCHED THEN UPDATE SET *
     WHEN NOT MATCHED THEN INSERT *
 """)
- 
+
 print(f"Silver clean table row count: {spark.table(SILVER_CLEAN_TABLE).count()}")
 
 # COMMAND ----------
@@ -264,7 +258,6 @@ else:
 
 # COMMAND ----------
 
-
 print("=== Silver clean: per-ticker row counts ===")
 display(
     spark.table(SILVER_CLEAN_TABLE)
@@ -272,7 +265,7 @@ display(
     .count()
     .orderBy("ticker")
 )
- 
+
 print("=== Silver clean: sample daily_return values ===")
 display(
     spark.table(SILVER_CLEAN_TABLE)
@@ -280,7 +273,7 @@ display(
     .orderBy(F.desc("trade_date"))
     .limit(10)
 )
- 
+
 if spark.catalog.tableExists(SILVER_REJECTED_TABLE):
     print("=== Rejected rows by reason ===")
     display(
@@ -292,8 +285,13 @@ if spark.catalog.tableExists(SILVER_REJECTED_TABLE):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Log this run to control.pipeline_run_log
+
+# COMMAND ----------
+
 _run_ended_at = _dt.utcnow()
- 
+
 spark.sql(f"""
     INSERT INTO control.pipeline_run_log
     VALUES (
