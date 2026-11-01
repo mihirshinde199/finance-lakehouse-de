@@ -23,7 +23,6 @@ the notebook, not as a duplicate Airflow task.
 """
 
 from datetime import datetime, timedelta
-import token
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
