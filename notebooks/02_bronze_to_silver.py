@@ -33,6 +33,12 @@ spark.sql("CREATE SCHEMA IF NOT EXISTS silver")
 
 # COMMAND ----------
 
+from datetime import datetime as _dt
+_run_started_at = _dt.utcnow()
+_run_id = _run_started_at.strftime("%Y%m%dT%H%M%SZ")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Step 1: Read Bronze and cast types
 # MAGIC
@@ -276,3 +282,24 @@ if spark.catalog.tableExists(SILVER_REJECTED_TABLE):
         .count()
         .orderBy(F.desc("count"))
     )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Log this run to control.pipeline_run_log
+
+# COMMAND ----------
+
+_run_ended_at = _dt.utcnow()
+
+spark.sql(f"""
+    INSERT INTO control.pipeline_run_log
+    VALUES (
+        '{_run_id}', 'silver',
+        {total_count}, {valid_count}, {rejected_count},
+        TIMESTAMP('{_run_started_at.isoformat()}'),
+        TIMESTAMP('{_run_ended_at.isoformat()}'),
+        'SUCCESS'
+    )
+""")
+print(f"Logged silver run {_run_id}")

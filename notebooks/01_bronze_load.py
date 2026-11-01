@@ -1,8 +1,4 @@
 # Databricks notebook source
-# /// script
-# [tool.databricks.environment]
-# environment_version = "5"
-# ///
 # MAGIC %md
 # MAGIC # 01 - Bronze Load
 # MAGIC
@@ -32,7 +28,16 @@ from pyspark.sql.types import (
 # COMMAND ----------
 
 LANDING_PATH = "/Volumes/workspace/default/landing/"  # adjust to your actual upload path
-BATCH_ID = "20260825T014650Z"  # adjust to the batch folder you uploaded
+dbutils.widgets.text("batch_id", "")
+BATCH_ID = dbutils.widgets.get("batch_id")
+
+if not BATCH_ID:
+    raise ValueError("batch_id parameter is required - refusing to guess a batch.")
+
+# COMMAND ----------
+
+from datetime import datetime as _dt
+_run_started_at = _dt.utcnow()
 
 batch_path = f"{LANDING_PATH}{BATCH_ID}/"
 
@@ -131,7 +136,6 @@ print(f"Wrote {written_count} rows to bronze.stock_prices_raw")
 
 watermark_updates = (
     bronze_df
-    .filter(F.col("ticker").isNotNull())
     .groupBy("ticker")
     .agg(F.max("trade_date").alias("last_successful_trade_date"))
     .withColumn("last_run_timestamp", F.current_timestamp())
@@ -173,12 +177,21 @@ display(
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- DELETE FROM bronze.stock_prices_raw WHERE ticker IS NULL;
+# MAGIC %md
+# MAGIC ## Log this run to control.pipeline_run_log
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC SELECT ticker, COUNT(*) FROM bronze.stock_prices_raw 
-# MAGIC WHERE ticker IS NULL
-# MAGIC GROUP BY 1;
+_run_ended_at = _dt.utcnow()
+
+spark.sql(f"""
+    INSERT INTO control.pipeline_run_log
+    VALUES (
+        '{BATCH_ID}', 'bronze',
+        {raw_df.count()}, {written_count}, 0,
+        TIMESTAMP('{_run_started_at.isoformat()}'),
+        TIMESTAMP('{_run_ended_at.isoformat()}'),
+        'SUCCESS'
+    )
+""")
+print(f"Logged bronze run for batch {BATCH_ID}")

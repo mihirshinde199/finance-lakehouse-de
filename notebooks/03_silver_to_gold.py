@@ -41,6 +41,12 @@ spark.sql("CREATE SCHEMA IF NOT EXISTS gold")
 
 # COMMAND ----------
 
+from datetime import datetime as _dt
+_run_started_at = _dt.utcnow()
+_run_id = _run_started_at.strftime("%Y%m%dT%H%M%SZ")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Step 1: Read Silver, compute rolling metrics over FULL history
 # MAGIC
@@ -126,10 +132,10 @@ gold_daily_df.createOrReplaceTempView("gold_daily_updates")
 # Delete existing rows for any (ticker, trade_date) pair present in this
 # run's window -- scoped precisely, not a blind full-table wipe.
 spark.sql(f"""
-    DELETE FROM {GOLD_DAILY_TABLE}
-    WHERE (ticker, trade_date) IN (
-        SELECT ticker, trade_date FROM gold_daily_updates
-    )
+    MERGE INTO {GOLD_DAILY_TABLE} AS target
+    USING gold_daily_updates AS source
+    ON target.ticker = source.ticker AND target.trade_date = source.trade_date
+    WHEN MATCHED THEN DELETE
 """)
 
 gold_daily_df.write.format("delta").mode("append").saveAsTable(GOLD_DAILY_TABLE)
@@ -288,3 +294,24 @@ display(
     .filter(F.col("as_of_date") == F.current_date())
     .orderBy(F.desc("cumulative_return_ytd"))
 )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Log this run to control.pipeline_run_log
+
+# COMMAND ----------
+
+_run_ended_at = _dt.utcnow()
+
+spark.sql(f"""
+    INSERT INTO control.pipeline_run_log
+    VALUES (
+        '{_run_id}', 'gold',
+        {metrics_df.count()}, {gold_daily_df.count()}, 0,
+        TIMESTAMP('{_run_started_at.isoformat()}'),
+        TIMESTAMP('{_run_ended_at.isoformat()}'),
+        'SUCCESS'
+    )
+""")
+print(f"Logged gold run {_run_id}")
