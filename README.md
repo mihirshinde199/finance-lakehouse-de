@@ -22,9 +22,9 @@ A daily batch data pipeline that ingests market data for a fixed basket of 12 ti
 
 ![Dashboard: performance across the basket](docs/images/dashboard-performance.png)
 
-![Dashboard: pipeline health-1](docs/images/dashboard-health 1.png)
+![Dashboard: pipeline health-1](docs/images/dashboard-health-1.png)
 
-![Dashboard: pipeline health-2](docs/images/dashboard-health 2.png)
+![Dashboard: pipeline health-2](docs/images/dashboard-health-2.png)
 
 ## Architecture
 
