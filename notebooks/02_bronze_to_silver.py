@@ -232,22 +232,41 @@ print(f"Silver clean table row count: {spark.table(SILVER_CLEAN_TABLE).count()}"
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 7: Append rejected rows
+# MAGIC ## Step 7: Merge rejected rows
 # MAGIC
-# MAGIC Rejected is a quarantine log, not a MERGE target -- append-only, so
-# MAGIC we keep a full history of what was rejected and why, across runs.
+# MAGIC Rejected rows go to a quarantine table keyed on (ticker, trade_date,
+# MAGIC dq_failure_reason). Silver re-validates all of Bronze on every run, so a
+# MAGIC row that stays bad would be rejected again each time. MERGE keeps one
+# MAGIC row per failure instead of appending a new copy per run.
+# MAGIC
+# MAGIC The null-safe operator <=> is required: a row rejected for a missing
+# MAGIC ticker or an invalid date has a NULL key column, and NULL = NULL is
+# MAGIC never true in SQL.
 
 # COMMAND ----------
 
-if silver_rejected_df.count() > 0:
-    (
-        silver_rejected_df.write
-        .format("delta")
-        .mode("append")
-        .option("mergeSchema", "true")
-        .saveAsTable(SILVER_REJECTED_TABLE)
-    )
-    print(f"Appended {silver_rejected_df.count()} rows to {SILVER_REJECTED_TABLE}")
+rejected_count_now = silver_rejected_df.count()
+
+if rejected_count_now > 0:
+    if not spark.catalog.tableExists(SILVER_REJECTED_TABLE):
+        (
+            silver_rejected_df.limit(0).write
+            .format("delta")
+            .saveAsTable(SILVER_REJECTED_TABLE)
+        )
+
+    silver_rejected_df.createOrReplaceTempView("silver_rejected_updates")
+
+    spark.sql(f"""
+        MERGE INTO {SILVER_REJECTED_TABLE} AS target
+        USING silver_rejected_updates AS source
+        ON  target.ticker <=> source.ticker
+        AND target.trade_date <=> source.trade_date
+        AND target.dq_failure_reason = source.dq_failure_reason
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+    print(f"Merged {rejected_count_now} rejected rows into {SILVER_REJECTED_TABLE}")
 else:
     print("No rejected rows this run.")
 

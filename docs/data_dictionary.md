@@ -85,7 +85,9 @@ One row per `(ticker, trade_date)`. Loaded with `MERGE`: matching rows are updat
 
 ### `silver.stock_prices_rejected`
 
-Quarantine for rows that failed validation. Append-only, with the same columns as the clean table except `daily_return`. Here `is_valid` is always false and `dq_failure_reason` is always filled in.
+Quarantine for rows that failed validation, with the same columns as the clean table except `daily_return`. Here `is_valid` is always false and `dq_failure_reason` is always filled in.
+
+Loaded with `MERGE` on `(ticker, trade_date, dq_failure_reason)`. Silver re-validates all of Bronze on every run, so a row that stays bad is rejected again each time. The merge keeps one row per failure instead of adding a copy per run. The match is null-safe (`<=>`), because a row rejected for a missing ticker or an invalid date has a NULL key column.
 
 A row is checked in the order below, and the first failing rule becomes its `dq_failure_reason`. The table stays empty while all data passes.
 
@@ -189,7 +191,6 @@ Because Silver reprocesses all of Bronze each run, its `rows_in` and `rows_out` 
 
 ## Known limitations
 
-- **Quarantine rows can repeat.** Silver appends its rejected rows on every run and re-validates all of Bronze each time, so a row that stays bad is appended again on each run. Read the table with a `DISTINCT` or group on `(ticker, trade_date, source_batch_id)`. This has not occurred yet, because no row has been rejected so far.
 - **Failures are not in the run log.** Only successful runs write a row. Use the Airflow task history for failures.
 - **Returns exclude dividends.** `daily_return`, YTD return and max drawdown are based on `close`. `adj_close` is stored but not used in any metric.
 - **Short histories.** For a new ticker, the moving averages and the volume average use the rows that exist when a window is not yet full. Volatility needs at least two daily returns and is NULL before that.
